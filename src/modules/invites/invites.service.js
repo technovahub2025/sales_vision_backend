@@ -25,6 +25,13 @@ export const invitesService = {
     if (query.status) {
       where.status = query.status;
     }
+    if (query.role) {
+      where.role = query.role;
+    }
+    if (query.search) {
+      const escaped = String(query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      where.email = { $regex: escaped, $options: 'i' };
+    }
 
     const [items, total] = await Promise.all([
       WorkspaceInvite.find(where, {

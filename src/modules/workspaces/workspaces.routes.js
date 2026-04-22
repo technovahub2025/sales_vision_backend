@@ -9,6 +9,7 @@ import {
   inviteMemberSchema,
   listActivityQuerySchema,
   listAuditLogQuerySchema,
+  listMembersQuerySchema,
   memberParamsSchema,
   updateMemberRoleSchema,
   updateWorkspaceSchema,
@@ -48,6 +49,7 @@ workspacesRoutes.delete(
 workspacesRoutes.get(
   '/:workspaceId/members',
   validateRequest(workspaceParamsSchema),
+  validateRequest(listMembersQuerySchema),
   workspaceResolver,
   requireWorkspaceMembership,
   workspacesController.listMembers,
@@ -96,4 +98,3 @@ workspacesRoutes.get(
   requireWorkspaceMembership,
   workspacesController.activity,
 );
-

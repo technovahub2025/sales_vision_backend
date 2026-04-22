@@ -48,8 +48,11 @@ export const workspacesController = {
   }),
 
   listMembers: asyncHandler(async (req, res) => {
-    const data = await workspacesService.listMembers({ workspaceId: req.params.workspaceId });
-    return res.status(200).json(ok(data));
+    const data = await workspacesService.listMembers({
+      workspaceId: req.params.workspaceId,
+      query: req.query,
+    });
+    return res.status(200).json(ok(data.items, { ...data.meta }));
   }),
 
   inviteMember: asyncHandler(async (req, res) => {
@@ -101,4 +104,3 @@ export const workspacesController = {
     return res.status(200).json(ok(data.items, { ...data.meta }));
   }),
 };
-

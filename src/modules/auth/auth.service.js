@@ -56,6 +56,17 @@ function refreshCookieMaxAgeMs() {
 }
 
 /**
+ * Determines the default role for normal auth-based user creation.
+ * First user of a workspace must remain owner; subsequent auth-created users default to viewer.
+ * @param {{ workspaceOwnerId?: import('mongoose').Types.ObjectId|string|null, workspaceUserCount?: number }} params
+ * @returns {'owner' | 'viewer'}
+ */
+function resolveAuthDefaultRole({ workspaceOwnerId, workspaceUserCount = 0 }) {
+  if (workspaceOwnerId || Number(workspaceUserCount) > 0) return 'viewer';
+  return 'owner';
+}
+
+/**
  * @param {{ userId: string, workspaceId: string, email: string, role: string, ipAddress?: string, userAgent?: string }} params
  */
 async function issueAuthTokens(params) {
@@ -209,22 +220,29 @@ async function register({ body, req, res }) {
     throw error;
   }
 
+  const defaultRole = resolveAuthDefaultRole({
+    workspaceOwnerId: workspace.ownerId,
+    workspaceUserCount: 0,
+  });
+
   const passwordHash = await bcrypt.hash(body.password, 12);
   const user = await User.create({
     workspaceId: workspace._id,
     displayName: body.displayName,
     email: body.email,
     passwordHash,
-    role: 'owner',
+    role: defaultRole,
   });
 
-  await Workspace.updateOne({ _id: workspace._id }, { $set: { ownerId: user._id } });
+  if (defaultRole === 'owner') {
+    await Workspace.updateOne({ _id: workspace._id }, { $set: { ownerId: user._id } });
+  }
 
   await WorkspaceMember.updateOne(
     { workspaceId: workspace._id, userId: user._id },
     {
       $set: {
-        role: 'owner',
+        role: defaultRole,
         status: 'active',
       },
       $setOnInsert: {

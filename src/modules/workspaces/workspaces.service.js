@@ -282,14 +282,27 @@ export const workspacesService = {
     return { removed: true };
   },
 
-  async listMembers({ workspaceId }) {
+  async listMembers({ workspaceId, query = {} }) {
     const resolvedId = await resolveWorkspaceId(workspaceId);
     if (!resolvedId) {
       throw new ApiError(404, 'Workspace not found', 'NOT_FOUND');
     }
 
-    const members = await WorkspaceMember.aggregate([
-      { $match: { workspaceId: new mongoose.Types.ObjectId(resolvedId), status: 'active' } },
+    const { page, limit, skip } = parsePage(query);
+    const baseMatch = {
+      workspaceId: new mongoose.Types.ObjectId(resolvedId),
+      status: 'active',
+    };
+
+    if (query.role) {
+      baseMatch.role = String(query.role);
+    }
+
+    const searchTerm = String(query.search || '').trim();
+    const searchRegex = searchTerm ? new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : null;
+
+    const pipeline = [
+      { $match: baseMatch },
       {
         $lookup: {
           from: 'sv_users',
@@ -308,19 +321,50 @@ export const workspacesService = {
           user: { $first: '$user' },
         },
       },
-      { $sort: { joinedAt: 1 } },
-      { $limit: 300 },
-    ]);
+    ];
 
-    return members.map((member) => ({
-      userId: String(member.userId),
-      role: member.role,
-      joinedAt: member.joinedAt,
-      name: member.user?.displayName || 'Unknown',
-      email: member.user?.email || '',
-      avatarUrl: member.user?.avatarUrl || '',
-      lastLoginAt: member.user?.lastLoginAt || null,
-    }));
+    if (searchRegex) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'user.displayName': { $regex: searchRegex } },
+            { 'user.email': { $regex: searchRegex } },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      { $sort: { joinedAt: 1 } },
+      {
+        $facet: {
+          items: [{ $skip: skip }, { $limit: limit }],
+          total: [{ $count: 'count' }],
+        },
+      },
+    );
+
+    const [result] = await WorkspaceMember.aggregate(pipeline);
+    const members = result?.items || [];
+    const total = result?.total?.[0]?.count || 0;
+
+    return {
+      items: members.map((member) => ({
+        userId: String(member.userId),
+        role: member.role,
+        joinedAt: member.joinedAt,
+        name: member.user?.displayName || 'Unknown',
+        email: member.user?.email || '',
+        avatarUrl: member.user?.avatarUrl || '',
+        lastLoginAt: member.user?.lastLoginAt || null,
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
   },
 
   async inviteMember({ workspaceId, actorId, body, req }) {
@@ -498,4 +542,3 @@ export const workspacesService = {
     return { items, meta: { page, limit, total } };
   },
 };
-

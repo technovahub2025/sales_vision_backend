@@ -10,6 +10,8 @@ export const createInviteSchema = {
 export const listInvitesSchema = {
   query: z.object({
     status: z.enum(['pending', 'accepted', 'revoked', 'expired']).optional(),
+    role: z.enum(['admin', 'member', 'viewer']).optional(),
+    search: z.string().trim().max(120).optional(),
     page: z.coerce.number().int().min(1).default(1).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(20).optional(),
   }),
