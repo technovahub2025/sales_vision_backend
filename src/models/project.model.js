@@ -64,6 +64,7 @@ const projectSchema = new mongoose.Schema(
 );
 
 projectSchema.index({ workspaceId: 1, updatedAt: -1 });
+projectSchema.index({ workspaceId: 1, createdAt: -1 });
 projectSchema.index({ workspaceId: 1, status: 1, updatedAt: -1 });
 projectSchema.index({ workspaceId: 1, teamId: 1, updatedAt: -1 });
 projectSchema.index({ workspaceId: 1, clientId: 1, updatedAt: -1 });

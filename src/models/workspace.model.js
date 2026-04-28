@@ -13,7 +13,8 @@ const workspaceSchema = new mongoose.Schema(
     },
     plan: {
       type: String,
-      default: 'starter',
+      enum: ['free', 'pro'],
+      default: 'free',
       index: true,
     },
     timezone: {

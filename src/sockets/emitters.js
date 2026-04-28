@@ -1,6 +1,8 @@
 import { workspaceRoom, moduleRoom, entityRoom, taskRoom } from './rooms.js';
+import { invalidateAnalyticsCache } from '../modules/analytics/analytics.service.js';
 
 const pendingEvents = new Map();
+const ANALYTICS_SOURCE_MODULES = new Set(['tasks', 'projects', 'leads', 'campaigns', 'employees', 'clients']);
 
 /**
  * @param {unknown} input
@@ -78,6 +80,26 @@ function buildPayload({ workspaceId, moduleName, entity, action, data }) {
 export function emitDomainEvent(io, event) {
   const { workspaceId, moduleName, entity, action, data } = event;
   const payload = buildPayload(event);
+
+  if (ANALYTICS_SOURCE_MODULES.has(String(moduleName || '').toLowerCase())) {
+    invalidateAnalyticsCache(workspaceId);
+    io.to(workspaceRoom(workspaceId)).emit(
+      'analytics:updated',
+      buildPayload({
+        workspaceId,
+        moduleName: 'analytics',
+        entity: 'analytics',
+        action: 'updated',
+        data: {
+          workspaceId,
+          sourceModule: moduleName,
+          sourceEntity: entity,
+          sourceAction: action,
+          updatedAt: new Date().toISOString(),
+        },
+      }),
+    );
+  }
 
   io.to(workspaceRoom(workspaceId)).emit('realtime:event', payload);
   io.to(workspaceRoom(workspaceId)).emit(`${entity}:${action}`, payload);

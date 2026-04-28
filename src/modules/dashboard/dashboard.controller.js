@@ -18,12 +18,14 @@ export const dashboardController = {
 
   async exportReport(req, res, next) {
     try {
-      const data = await dashboardService.exportReport({
+      const payload = await dashboardService.exportReport({
         workspaceId: req.workspaceId,
         format: req.body?.format || 'pdf',
         io: req.app.locals.io,
       });
-      return res.status(200).json(ok(data, { version: Date.now(), generatedAt: data.generatedAt }));
+      res.setHeader('Content-Type', payload.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+      return res.status(200).send(payload.body);
     } catch (error) {
       return next(error);
     }

@@ -92,6 +92,14 @@ function parsePage(query = {}) {
 }
 
 const FINAL_STATUSES = new Set(['completed', 'done', 'closed']);
+const COMPLETED_STATUS_KEY = 'completed';
+
+function createTaskStatusLockedError() {
+  const error = new Error('Completed task cannot be moved back');
+  error.code = 'TASK_STATUS_LOCKED';
+  error.statusCode = 409;
+  return error;
+}
 
 function normalizeColumns(project) {
   const columns = project?.boardConfig?.columns?.length ? project.boardConfig.columns : DEFAULT_COLUMNS;
@@ -499,11 +507,15 @@ export const projectsService = {
     const workspaceObjectId = requireWorkspaceObjectId(workspaceId);
     const { page, limit, skip } = parsePage(query);
     const match = { workspaceId: workspaceObjectId, ...(query.status ? { status: query.status } : {}) };
+    const sort =
+      query.sort === 'created_desc'
+        ? { createdAt: -1, _id: -1 }
+        : { updatedAt: -1 };
 
     const [items, total] = await Promise.all([
       Project.aggregate([
         { $match: match },
-        { $sort: { updatedAt: -1 } },
+        { $sort: sort },
         { $skip: skip },
         { $limit: limit },
         {
@@ -604,6 +616,7 @@ export const projectsService = {
             overdueTaskCount: { $ifNull: [{ $first: '$taskStats.overdueTaskCount' }, 0] },
             clientName: { $ifNull: [{ $first: '$client.name' }, '' ] },
             lead: { $ifNull: [{ $first: '$lead' }, null] },
+            createdAt: 1,
             updatedAt: 1,
           },
         },
@@ -1407,6 +1420,12 @@ export const projectsService = {
       statusKey: toColumnKey,
     });
     const nextColumnKey = resolvedNextStatus.key || toColumnKey;
+    if (
+      String(task.status || '').toLowerCase() === COMPLETED_STATUS_KEY &&
+      !FINAL_STATUSES.has(String(nextColumnKey || '').toLowerCase())
+    ) {
+      throw createTaskStatusLockedError();
+    }
     const isAllowed = await workflowService.validateTransition({
       workspaceId,
       workflowId: resolvedNextStatus.workflowId || task.workflowId || null,

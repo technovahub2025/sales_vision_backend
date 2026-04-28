@@ -132,6 +132,11 @@ function cacheKey(prefix, workspaceId, query = {}, userId = '') {
   return `${prefix}:${payload}`;
 }
 
+export function invalidateAnalyticsCache(workspaceId) {
+  if (!workspaceId) return;
+  cache.deleteByPrefix(`overview:{"workspaceId":"${String(workspaceId)}`);
+}
+
 function toCsvCell(value) {
   const text = value === null || value === undefined ? '' : String(value);
   if (!text.includes(',') && !text.includes('"') && !text.includes('\n')) return text;
@@ -152,6 +157,15 @@ function sectionRowsToCsv(title, rows) {
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function buildDateKeysInRange(dateFrom, rangeDays) {
+  const keys = [];
+  for (let i = 0; i < rangeDays; i += 1) {
+    const day = new Date(dateFrom.getTime() + i * ONE_DAY);
+    keys.push(day.toISOString().slice(0, 10));
+  }
+  return keys;
 }
 
 async function buildVelocitySeries(workspaceId) {
@@ -348,14 +362,14 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
   const now = new Date();
 
   const taskMatch = {
-    workspaceId,
+    workspaceId: workspaceObjectId,
     archived: { $ne: true },
     ...(filters.priority ? { priority: filters.priority } : {}),
     ...(filters.status ? { status: filters.status } : {}),
   };
 
   const leadMatch = {
-    workspaceId,
+    workspaceId: workspaceObjectId,
     isArchived: { $ne: true },
     ...(filters.priority ? { priority: filters.priority } : {}),
     ...(filters.status ? { statusId: filters.status } : {}),
@@ -363,14 +377,14 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
   };
 
   const campaignMatch = {
-    workspaceId,
+    workspaceId: workspaceObjectId,
     isArchived: { $ne: true },
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.channel ? { channel: filters.channel } : {}),
   };
 
   const clientMatch = {
-    workspaceId,
+    workspaceId: workspaceObjectId,
     isArchived: { $ne: true },
   };
 
@@ -419,7 +433,6 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       {
         $match: {
           ...taskMatch,
-          updatedAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo },
         },
       },
       {
@@ -509,7 +522,6 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       {
         $match: {
           ...leadMatch,
-          createdAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo },
         },
       },
       { $group: { _id: '$statusId', count: { $sum: 1 }, value: { $sum: { $ifNull: ['$value', 0] } } } },
@@ -518,7 +530,6 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       {
         $match: {
           ...leadMatch,
-          createdAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo },
         },
       },
       {
@@ -534,7 +545,6 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       {
         $match: {
           ...campaignMatch,
-          updatedAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo },
         },
       },
       {
@@ -549,7 +559,7 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       },
     ]),
     Project.aggregate([
-      { $match: { workspaceId: workspaceObjectId, updatedAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo } } },
+      { $match: { workspaceId: workspaceObjectId } },
       {
         $lookup: {
           from: 'sv_tasks',
@@ -591,7 +601,7 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       { $limit: Math.max(filters.limit, 5) },
     ]),
     Campaign.aggregate([
-      { $match: { ...campaignMatch, updatedAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo } } },
+      { $match: { ...campaignMatch } },
       {
         $project: {
           name: 1,
@@ -609,7 +619,6 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       {
         $match: {
           ...taskMatch,
-          updatedAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo },
           primaryAssigneeId: { $ne: null },
         },
       },
@@ -645,7 +654,6 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
       {
         $match: {
           ...leadMatch,
-          createdAt: { $gte: dateRange.dateFrom, $lte: dateRange.dateTo },
           clientId: { $ne: null },
         },
       },
@@ -735,16 +743,32 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
     };
   });
 
-  const completionTrend = completionTrendRaw.map((row) => ({
-    date: row._id,
-    completionRate: percentage(row.completed, row.total),
-    total: Number(row.total || 0),
-    completed: Number(row.completed || 0),
-  }));
+  const completionTrendMap = new Map(
+    completionTrendRaw.map((row) => [
+      String(row._id),
+      {
+        total: Number(row.total || 0),
+        completed: Number(row.completed || 0),
+      },
+    ]),
+  );
+  const overdueTrendMap = new Map(
+    overdueTrendRaw.map((row) => [String(row._id), Number(row.overdue || 0)]),
+  );
+  const trendDateKeys = buildDateKeysInRange(dateRange.dateFrom, dateRange.rangeDays);
+  const completionTrend = trendDateKeys.map((dateKey) => {
+    const hit = completionTrendMap.get(dateKey) || { total: 0, completed: 0 };
+    return {
+      date: dateKey,
+      completionRate: percentage(hit.completed, hit.total),
+      total: hit.total,
+      completed: hit.completed,
+    };
+  });
 
-  const overdueTrend = overdueTrendRaw.map((row) => ({
-    date: row._id,
-    overdue: Number(row.overdue || 0),
+  const overdueTrend = trendDateKeys.map((dateKey) => ({
+    date: dateKey,
+    overdue: Number(overdueTrendMap.get(dateKey) || 0),
   }));
 
   const availabilityMap = employeeAvailabilityRaw.reduce((acc, row) => {
@@ -759,7 +783,7 @@ async function buildWorkspace360(workspaceId, query = {}, context = {}) {
   }, {});
 
   const employees = await Employee.find(
-    { workspaceId },
+    { workspaceId: workspaceObjectId },
     { _id: 1, name: 1, userId: 1, team: 1, capacity: 1, velocity: 1 },
   ).lean();
 

@@ -3,6 +3,7 @@ import { workspacesController } from './workspaces.controller.js';
 import { validateRequest } from '../../middlewares/validation.js';
 import { requireWorkspaceMembership } from '../../middlewares/auth.js';
 import { requirePermission } from '../../middlewares/rbac.js';
+import { requirePlanFeature } from '../../middlewares/planGuards.js';
 import { workspaceResolver } from '../../middlewares/workspaceResolver.js';
 import {
   createWorkspaceSchema,
@@ -10,6 +11,7 @@ import {
   listActivityQuerySchema,
   listAuditLogQuerySchema,
   listMembersQuerySchema,
+  listWorkspacesQuerySchema,
   memberParamsSchema,
   updateMemberRoleSchema,
   updateWorkspaceSchema,
@@ -18,8 +20,8 @@ import {
 
 export const workspacesRoutes = Router();
 
-workspacesRoutes.get('/', workspacesController.list);
-workspacesRoutes.post('/', validateRequest(createWorkspaceSchema), workspacesController.create);
+workspacesRoutes.get('/', validateRequest(listWorkspacesQuerySchema), workspacesController.list);
+workspacesRoutes.post('/', validateRequest(createWorkspaceSchema), requirePermission('workspace', 'update'), workspacesController.create);
 
 workspacesRoutes.get(
   '/:workspaceId',
@@ -87,6 +89,7 @@ workspacesRoutes.get(
   validateRequest(listAuditLogQuerySchema),
   workspaceResolver,
   requireWorkspaceMembership,
+  requirePlanFeature('auditLog'),
   requirePermission('workspace', 'manageMembers'),
   workspacesController.auditLog,
 );

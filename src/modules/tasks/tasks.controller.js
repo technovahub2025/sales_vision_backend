@@ -62,6 +62,9 @@ tasksController.updateStatus = async (req, res, next) => {
     return res.status(200).json(ok(task));
   } catch (error) {
     const message = String(error?.message || '');
+    if (error?.code === 'TASK_STATUS_LOCKED' || message.includes('Completed task cannot be moved back')) {
+      return res.status(409).json(fail('Completed task cannot be moved back', 'TASK_STATUS_LOCKED'));
+    }
     if (
       message.includes('Approval pending') ||
       message.includes('Blocked by open dependencies') ||
@@ -105,6 +108,24 @@ tasksController.update = async (req, res, next) => {
       return res.status(400).json(fail(message, 'VALIDATION_ERROR'));
     }
     if (
+      error?.code === 'TASK_STATUS_LOCKED' ||
+      message.includes('Completed task cannot be moved back') ||
+      message.includes('Approval pending') ||
+      message.includes('Blocked by open dependencies') ||
+      message.includes('Invalid workflow transition')
+    ) {
+      return res.status(409).json(
+        fail(
+          message.includes('Completed task cannot be moved back') || error?.code === 'TASK_STATUS_LOCKED'
+            ? 'Completed task cannot be moved back'
+            : message,
+          error?.code === 'TASK_STATUS_LOCKED' || message.includes('Completed task cannot be moved back')
+            ? 'TASK_STATUS_LOCKED'
+            : 'CONFLICT',
+        ),
+      );
+    }
+    if (
       message.includes('Approval pending') ||
       message.includes('Blocked by open dependencies') ||
       message.includes('Invalid workflow transition')
@@ -128,6 +149,8 @@ tasksController.bulkUpdate = async (req, res, next) => {
   } catch (error) {
     const message = String(error?.message || '');
     if (
+      error?.code === 'TASK_STATUS_LOCKED' ||
+      message.includes('Completed task cannot be moved back') ||
       message.includes('invalid priority') ||
       message.includes('invalid issue type') ||
       message.includes('epic cannot have a parent') ||
@@ -145,6 +168,9 @@ tasksController.bulkUpdate = async (req, res, next) => {
       message.includes('Approval pending') ||
       message.includes('Blocked by open dependencies')
     ) {
+      if (error?.code === 'TASK_STATUS_LOCKED' || message.includes('Completed task cannot be moved back')) {
+        return res.status(409).json(fail('Completed task cannot be moved back', 'TASK_STATUS_LOCKED'));
+      }
       return res.status(409).json(fail(message, 'CONFLICT'));
     }
     return next(error);

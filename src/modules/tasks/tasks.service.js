@@ -18,12 +18,21 @@ import { validateCustomFields } from '../customFields/customFields.service.js';
 import { notificationsService } from '../notifications/notifications.service.js';
 import { workflowService } from '../workflow/workflow.service.js';
 import { getPagination } from '../../utils/pagination.js';
+import { planLimitsService } from '../../services/planLimits.service.js';
 
 const repo = createRepository(Task);
 const PRIORITIES = new Set(['low', 'medium', 'high', 'critical']);
 const FINAL_STATUSES = new Set(['completed', 'done', 'closed']);
 const SORT_FIELDS = new Set(['dueDate', 'priority', 'createdAt', 'updatedAt']);
 const ISSUE_TYPES = new Set(['epic', 'task', 'subtask']);
+const COMPLETED_STATUS_KEY = 'completed';
+
+function createTaskStatusLockedError() {
+  const error = new Error('Completed task cannot be moved back');
+  error.code = 'TASK_STATUS_LOCKED';
+  error.statusCode = 409;
+  return error;
+}
 
 function emitTaskChange(io, workspaceId, task, action = 'updated') {
   emitDomainEvent(io, { workspaceId, moduleName: 'tasks', entity: 'task', action, data: task });
@@ -662,6 +671,14 @@ export const tasksService = {
         statusId: payload.statusId || null,
         statusKey: payload.status || null,
       });
+      const nextStatusKey = resolvedNext.key || payload.status || previous?.status;
+
+      if (
+        String(previous?.status || '').toLowerCase() === COMPLETED_STATUS_KEY &&
+        !FINAL_STATUSES.has(String(nextStatusKey || '').toLowerCase())
+      ) {
+        throw createTaskStatusLockedError();
+      }
 
       const isAllowed = await workflowService.validateTransition({
         workspaceId,
@@ -673,7 +690,6 @@ export const tasksService = {
         throw new Error('Invalid workflow transition');
       }
 
-      const nextStatusKey = resolvedNext.key || payload.status || previous?.status;
       if (nextStatusKey && FINAL_STATUSES.has(String(nextStatusKey))) {
         if (previous?.approval?.required && previous?.approval?.status !== 'approved') {
           throw new Error('Approval pending');
@@ -939,6 +955,14 @@ export const tasksService = {
     const size = Number(data?.size || 0);
     if (!fileName || !mimeType || size < 0) {
       throw new Error('invalid attachment payload');
+    }
+    const storageCheck = await planLimitsService.ensureStorageCapacity(workspaceId, size);
+    if (!storageCheck.allowed) {
+      const error = new Error(storageCheck.message);
+      error.statusCode = 429;
+      error.code = storageCheck.code;
+      error.details = storageCheck.details;
+      throw error;
     }
 
     const attachment = await TaskAttachment.create({
@@ -1416,6 +1440,14 @@ export const tasksService = {
     };
     if (!attachment.url || !attachment.filename) {
       throw new Error('url and filename are required');
+    }
+    const storageCheck = await planLimitsService.ensureStorageCapacity(workspaceId, attachment.size);
+    if (!storageCheck.allowed) {
+      const error = new Error(storageCheck.message);
+      error.statusCode = 429;
+      error.code = storageCheck.code;
+      error.details = storageCheck.details;
+      throw error;
     }
     const task = await Task.findOneAndUpdate(
       { workspaceId, _id: taskId },

@@ -4,15 +4,25 @@ import { User } from '../../models/user.model.js';
 import { Workspace } from '../../models/workspace.model.js';
 import { randomToken, sha256 } from '../../utils/crypto.js';
 import { queueInviteEmail } from '../auth/auth.mailer.js';
+import { planLimitsService } from '../../services/planLimits.service.js';
 
 function inviteExpiryDate() {
   const hours = Number(process.env.INVITE_EXPIRY_HOURS || 168);
   return new Date(Date.now() + hours * 60 * 60 * 1000);
 }
 
+function appBasePath() {
+  const configured = process.env.APP_BASE_PATH || process.env.CLIENT_BASE_PATH || process.env.FRONTEND_BASE_PATH || '/test-salesvision';
+  const normalized = `/${String(configured || '').replace(/^\/+|\/+$/g, '')}`;
+  return normalized === '/' ? '' : normalized;
+}
+
 function buildInviteLink(rawToken) {
-  const appUrl = process.env.APP_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-  return `${appUrl}/invite/${rawToken}`;
+  const appUrl = String(process.env.APP_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173').replace(/\/+$/, '');
+  const basePath = appBasePath();
+  const safeToken = encodeURIComponent(String(rawToken || ''));
+  const hasBasePath = basePath && appUrl.endsWith(basePath);
+  return `${appUrl}${hasBasePath ? '' : basePath}/invite/${safeToken}`;
 }
 
 export const invitesService = {
@@ -72,6 +82,15 @@ export const invitesService = {
       const error = new Error('Inviter not found');
       error.statusCode = 404;
       error.code = 'NOT_FOUND';
+      throw error;
+    }
+
+    const capCheck = await planLimitsService.ensureMemberCapacity(workspaceId, 1);
+    if (!capCheck.allowed) {
+      const error = new Error(capCheck.message);
+      error.statusCode = 429;
+      error.code = capCheck.code;
+      error.details = capCheck.details;
       throw error;
     }
 

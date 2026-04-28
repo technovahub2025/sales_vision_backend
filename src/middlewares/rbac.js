@@ -42,6 +42,7 @@ const PERMISSION_MATRIX = {
   },
   crm: {
     view: ['owner', 'admin', 'member'],
+    manage: ['owner', 'admin', 'member'],
   },
   analytics: {
     view: ['owner', 'admin', 'member', 'viewer'],
@@ -88,4 +89,3 @@ export function requirePermission(resource, action) {
     return next();
   };
 }
-

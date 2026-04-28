@@ -9,6 +9,7 @@ import { uploadToCloudinary, deleteFromCloudinary } from '../../config/cloudinar
 import { appendActivity } from '../activity/activity.service.js';
 import { emitDomainEvent, emitCoalesced } from '../../sockets/emitters.js';
 import { invalidateDashboardCache } from '../dashboard/dashboard.service.js';
+import { planLimitsService } from '../../services/planLimits.service.js';
 
 const ENTITY_MODELS = {
   task: Task,
@@ -84,6 +85,16 @@ export const attachmentsService = {
     }
     const entity = await ensureEntityExists({ workspaceId, entityType, entityId });
     if (!entity) return null;
+
+    const incomingBytes = (files || []).reduce((total, item) => total + Number(item?.size || 0), 0);
+    const storageCheck = await planLimitsService.ensureStorageCapacity(workspaceId, incomingBytes);
+    if (!storageCheck.allowed) {
+      const error = new Error(storageCheck.message);
+      error.statusCode = 429;
+      error.code = storageCheck.code;
+      error.details = storageCheck.details;
+      throw error;
+    }
 
     const created = [];
     for (const file of files) {

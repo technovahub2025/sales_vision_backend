@@ -76,6 +76,56 @@ function shallowDiff(previous = {}, next = {}) {
   return diff;
 }
 
+function toCsvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  if (!text.includes(',') && !text.includes('"') && !text.includes('\n')) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildCsv(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) return '';
+  const headers = Object.keys(rows[0]);
+  const lines = [headers.map(toCsvCell).join(',')];
+  for (const row of rows) {
+    lines.push(headers.map((header) => toCsvCell(row[header])).join(','));
+  }
+  return lines.join('\n');
+}
+
+function createSimplePdfFromLines(lines = []) {
+  const safeLines = (lines || []).map((line) => String(line || '').replace(/[()\\]/g, (match) => `\\${match}`));
+  const content = ['BT', '/F1 11 Tf', '50 780 Td', '14 TL'];
+  safeLines.forEach((line, index) => {
+    if (index === 0) content.push(`(${line}) Tj`);
+    else content.push(`T* (${line}) Tj`);
+  });
+  content.push('ET');
+  const stream = content.join('\n');
+
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    `5 0 obj\n<< /Length ${Buffer.byteLength(stream, 'utf8')} >>\nstream\n${stream}\nendstream\nendobj\n`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const obj of objects) {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += obj;
+  }
+  const xrefStart = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  return Buffer.from(pdf, 'utf8');
+}
+
 async function buildPortfolioHealth(workspaceId) {
   const workspaceObjectId = requireWorkspaceObjectId(workspaceId);
   const [result] = await Project.aggregate([
@@ -718,15 +768,51 @@ export const dashboardService = {
   },
 
   async exportReport({ workspaceId, format = 'pdf', io }) {
+    const normalizedFormat = String(format || 'pdf').toLowerCase() === 'csv' ? 'csv' : 'pdf';
     const generatedAt = new Date().toISOString();
     const exportId = `exp_${Date.now()}`;
-    const data = {
+    const snapshot = await computeWorkspaceDashboard(workspaceId);
+    const reportMeta = {
       exportId,
-      format,
+      format: normalizedFormat,
       generatedAt,
       payloadRef: `dashboard-report-${workspaceId}-${exportId}`,
-      downloadUrl: null,
     };
+
+    const dateToken = generatedAt.slice(0, 10);
+    let body = Buffer.from('');
+    let contentType = 'application/octet-stream';
+    let filename = `salesvision_dashboard_${dateToken}.txt`;
+
+    if (normalizedFormat === 'csv') {
+      const rows = [
+        { metric: 'Open Tasks', value: snapshot?.teamVelocity?.sprintPointsTotal ?? 0 },
+        { metric: 'Completed This Week', value: snapshot?.teamVelocity?.sprintPointsDone ?? 0 },
+        { metric: 'Overdue Projects', value: snapshot?.portfolioHealth?.overdueProjects ?? 0 },
+        { metric: 'Portfolio Health %', value: snapshot?.portfolioHealth?.healthPercent ?? 0 },
+        { metric: 'ROI Ratio', value: snapshot?.resourceROI?.roiRatio ?? 0 },
+      ];
+      const csv = buildCsv(rows);
+      body = Buffer.from(csv, 'utf8');
+      contentType = 'text/csv; charset=utf-8';
+      filename = `salesvision_dashboard_${dateToken}.csv`;
+    } else {
+      const lines = [
+        `SalesVision Dashboard Report`,
+        `Generated At: ${generatedAt}`,
+        ``,
+        `Portfolio Health: ${snapshot?.portfolioHealth?.healthPercent ?? 0}%`,
+        `Active Projects: ${snapshot?.portfolioHealth?.activeProjects ?? 0}`,
+        `Overdue Projects: ${snapshot?.portfolioHealth?.overdueProjects ?? 0}`,
+        `Sprint Points Done: ${snapshot?.teamVelocity?.sprintPointsDone ?? 0}`,
+        `Velocity Trend: ${snapshot?.teamVelocity?.velocityTrend ?? 0}`,
+        `Efficiency Gap %: ${snapshot?.efficiencyGap?.gapPercent ?? 0}`,
+        `ROI Ratio: ${snapshot?.resourceROI?.roiRatio ?? 0}`,
+      ];
+      body = createSimplePdfFromLines(lines);
+      contentType = 'application/pdf';
+      filename = `salesvision_dashboard_${dateToken}.pdf`;
+    }
 
     await appendActivity({
       workspaceId,
@@ -734,12 +820,17 @@ export const dashboardService = {
       action: 'exported',
       entity: 'dashboard_report',
       entityId: exportId,
-      message: `Dashboard report export requested (${format})`,
-      payload: data,
+      message: `Dashboard report exported (${normalizedFormat})`,
+      payload: reportMeta,
     });
 
     await invalidateDashboardCache({ workspaceId, io, trigger: 'dashboard.exported' });
-    return data;
+    return {
+      ...reportMeta,
+      body,
+      contentType,
+      filename,
+    };
   },
 
   async strategyMeeting({ workspaceId, io }) {

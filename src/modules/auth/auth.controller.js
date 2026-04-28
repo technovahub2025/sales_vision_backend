@@ -34,7 +34,7 @@ export const authController = {
   }),
 
   me: asyncHandler(async (req, res) => {
-    const data = await authService.me({ userId: req.auth.userId });
+    const data = await authService.me({ userId: req.auth.userId, auth: req.auth });
     return res.status(200).json(ok(data));
   }),
 

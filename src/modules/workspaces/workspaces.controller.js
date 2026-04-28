@@ -4,8 +4,8 @@ import { workspacesService } from './workspaces.service.js';
 
 export const workspacesController = {
   list: asyncHandler(async (req, res) => {
-    const data = await workspacesService.list({ userId: req.auth.userId });
-    return res.status(200).json(ok(data));
+    const data = await workspacesService.list({ userId: req.auth.userId, query: req.query });
+    return res.status(200).json(ok(data.items, { ...data.meta }));
   }),
 
   create: asyncHandler(async (req, res) => {

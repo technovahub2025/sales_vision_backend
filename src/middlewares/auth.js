@@ -4,7 +4,7 @@ import { fail } from '../utils/apiResponse.js';
 import { WorkspaceMember } from '../models/workspaceMember.model.js';
 import { resolveAccessToken } from './authToken.js';
 
-/** @typedef {{ userId: string, workspaceId: string, email: string, role: string }} AuthUser */
+/** @typedef {{ userId: string, workspaceId: string, email: string, role: string, scope?: string, isSuperAdmin?: boolean }} AuthUser */
 
 export function requireAuth(req, res, next) {
   try {
@@ -17,9 +17,11 @@ export function requireAuth(req, res, next) {
     const decoded = verifyAccessToken(token);
     req.auth = /** @type {AuthUser} */ ({
       userId: String(decoded.userId),
-      workspaceId: String(decoded.workspaceId),
+      workspaceId: decoded.workspaceId ? String(decoded.workspaceId) : '',
       email: String(decoded.email),
       role: String(decoded.role),
+      scope: decoded.scope ? String(decoded.scope) : '',
+      isSuperAdmin: decoded?.scope === 'super_admin' && decoded?.isSuperAdmin === true,
     });
     req.user = { _id: req.auth.userId, role: req.auth.role, email: req.auth.email };
 

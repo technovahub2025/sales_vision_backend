@@ -5,11 +5,14 @@ import { WorkspaceInvite } from '../../models/workspaceInvite.model.js';
 import { Activity } from '../../models/activity.model.js';
 import { AuditLog } from '../../models/auditLog.model.js';
 import { User } from '../../models/user.model.js';
+import { Attachment } from '../../models/attachment.model.js';
+import { TaskAttachment } from '../../models/taskAttachment.model.js';
 import { randomToken, sha256 } from '../../utils/crypto.js';
 import { emitDomainEvent } from '../../sockets/emitters.js';
 import { workspaceRoom } from '../../sockets/rooms.js';
 import { resolveWorkspaceId } from '../../services/workspace.service.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { FREE_PLAN_LIMITS, planLimitsService } from '../../services/planLimits.service.js';
 
 function slugify(input) {
   return String(input || '')
@@ -53,6 +56,57 @@ async function writeAuditLog({ workspaceId, actorId, action, resource, resourceI
   });
 }
 
+async function buildWorkspaceUsageMap(workspaceIds = []) {
+  const objectIds = workspaceIds.map((id) => new mongoose.Types.ObjectId(String(id)));
+  const [memberAgg, attachmentAgg, taskAttachmentAgg] = await Promise.all([
+    WorkspaceMember.aggregate([
+      { $match: { workspaceId: { $in: objectIds }, status: 'active' } },
+      { $group: { _id: '$workspaceId', count: { $sum: 1 } } },
+    ]),
+    Attachment.aggregate([
+      { $match: { workspaceId: { $in: objectIds } } },
+      { $group: { _id: '$workspaceId', total: { $sum: { $ifNull: ['$size', 0] } } } },
+    ]),
+    TaskAttachment.aggregate([
+      { $match: { workspaceId: { $in: objectIds } } },
+      { $group: { _id: '$workspaceId', total: { $sum: { $ifNull: ['$size', 0] } } } },
+    ]),
+  ]);
+
+  const usage = new Map();
+  for (const item of memberAgg || []) {
+    usage.set(String(item._id), {
+      memberCount: Number(item.count || 0),
+      storageUsedBytes: 0,
+      memberLimit: FREE_PLAN_LIMITS.maxMembers,
+      storageLimitBytes: FREE_PLAN_LIMITS.maxStorageBytes,
+    });
+  }
+  for (const item of attachmentAgg || []) {
+    const key = String(item._id);
+    const current = usage.get(key) || {
+      memberCount: 0,
+      storageUsedBytes: 0,
+      memberLimit: FREE_PLAN_LIMITS.maxMembers,
+      storageLimitBytes: FREE_PLAN_LIMITS.maxStorageBytes,
+    };
+    current.storageUsedBytes += Number(item.total || 0);
+    usage.set(key, current);
+  }
+  for (const item of taskAttachmentAgg || []) {
+    const key = String(item._id);
+    const current = usage.get(key) || {
+      memberCount: 0,
+      storageUsedBytes: 0,
+      memberLimit: FREE_PLAN_LIMITS.maxMembers,
+      storageLimitBytes: FREE_PLAN_LIMITS.maxStorageBytes,
+    };
+    current.storageUsedBytes += Number(item.total || 0);
+    usage.set(key, current);
+  }
+  return usage;
+}
+
 /**
  * @param {{ workspaceId: string, actorId: string }} params
  */
@@ -68,38 +122,119 @@ async function assertOwner(params) {
 }
 
 export const workspacesService = {
-  async list({ userId }) {
-    const memberships = await WorkspaceMember.find(
-      { userId, status: 'active' },
-      { workspaceId: 1, role: 1, joinedAt: 1 },
-    )
-      .sort({ joinedAt: 1 })
-      .limit(100)
-      .lean();
+  async list({ userId, query = {} }) {
+    const { page, limit, skip } = parsePage(query);
+    const status = String(query.status || 'all').toLowerCase();
+    const sort = String(query.sort || 'recent').toLowerCase();
+    const searchTerm = String(query.search || '').trim();
+    const searchRegex = searchTerm
+      ? new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+      : null;
 
-    const workspaceIds = memberships.map((item) => item.workspaceId);
-    const workspaces = await Workspace.find(
-      { _id: { $in: workspaceIds } },
-      { name: 1, slug: 1, settings: 1, logo: 1, ownerId: 1, createdAt: 1, updatedAt: 1 },
-    ).limit(100).lean();
+    const baseMatch = {
+      userId: new mongoose.Types.ObjectId(userId),
+    };
+    if (status === 'active') {
+      baseMatch.status = 'active';
+    } else if (status === 'inactive') {
+      baseMatch.status = { $ne: 'active' };
+    }
 
-    const mapById = new Map(workspaces.map((workspace) => [String(workspace._id), workspace]));
-    return memberships
-      .map((item) => {
-        const workspace = mapById.get(String(item.workspaceId));
-        if (!workspace) return null;
-        return {
-          id: String(workspace._id),
-          name: workspace.name,
-          slug: workspace.slug,
-          logo: workspace.logo || '',
-          timezone: workspace.settings?.timezone || 'UTC',
-          role: item.role,
-          joinedAt: item.joinedAt,
-          ownerId: workspace.ownerId ? String(workspace.ownerId) : '',
-        };
-      })
-      .filter(Boolean);
+    const sortStage = (() => {
+      if (sort === 'name_asc') return { 'workspace.name': 1 };
+      if (sort === 'name_desc') return { 'workspace.name': -1 };
+      return { 'workspace.updatedAt': -1, joinedAt: -1 };
+    })();
+
+    const pipeline = [
+      { $match: baseMatch },
+      {
+        $lookup: {
+          from: 'sv_workspaces',
+          localField: 'workspaceId',
+          foreignField: '_id',
+          pipeline: [
+            {
+              $project: {
+                _id: 1,
+                name: 1,
+                slug: 1,
+                settings: 1,
+                logo: 1,
+                ownerId: 1,
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            },
+          ],
+          as: 'workspace',
+        },
+      },
+      {
+        $set: {
+          workspace: { $first: '$workspace' },
+        },
+      },
+      {
+        $match: {
+          workspace: { $ne: null },
+        },
+      },
+    ];
+
+    if (searchRegex) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'workspace.name': { $regex: searchRegex } },
+            { 'workspace.slug': { $regex: searchRegex } },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      { $sort: sortStage },
+      {
+        $facet: {
+          items: [{ $skip: skip }, { $limit: limit }],
+          total: [{ $count: 'count' }],
+        },
+      },
+    );
+
+    const [result] = await WorkspaceMember.aggregate(pipeline);
+    const rawItems = result?.items || [];
+    const total = result?.total?.[0]?.count || 0;
+
+    const usageMap = await buildWorkspaceUsageMap(rawItems.map((item) => item.workspace._id));
+
+    return {
+      items: rawItems.map((item) => ({
+        id: String(item.workspace._id),
+        name: item.workspace.name,
+        slug: item.workspace.slug,
+        logo: item.workspace.logo || '',
+        timezone: item.workspace.settings?.timezone || 'UTC',
+        role: item.role,
+        joinedAt: item.joinedAt,
+        ownerId: item.workspace.ownerId ? String(item.workspace.ownerId) : '',
+        plan: planLimitsService.normalizePlan(item.workspace.plan),
+        usage: usageMap.get(String(item.workspace._id)) || {
+          memberCount: 0,
+          storageUsedBytes: 0,
+          memberLimit: FREE_PLAN_LIMITS.maxMembers,
+          storageLimitBytes: FREE_PLAN_LIMITS.maxStorageBytes,
+        },
+        status: item.status || 'active',
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
   },
 
   async create({ actorId, body, req, io }) {
@@ -109,7 +244,7 @@ export const workspacesService = {
       slug,
       logo: body.logo || '',
       ownerId: new mongoose.Types.ObjectId(actorId),
-      plan: 'starter',
+      plan: 'free',
       timezone: body.timezone || 'UTC',
       settings: {
         timezone: body.timezone || 'UTC',
@@ -121,6 +256,7 @@ export const workspacesService = {
       workspaceId: workspace._id,
       userId: new mongoose.Types.ObjectId(actorId),
       role: 'owner',
+      plan: planLimitsService.normalizePlan(workspace.plan),
       status: 'active',
       joinedAt: new Date(),
     });
@@ -142,6 +278,8 @@ export const workspacesService = {
       action: 'created',
       data: workspace.toObject(),
     });
+
+    const usage = await planLimitsService.getUsageSnapshot(resolvedId);
 
     return {
       id: String(workspace._id),
@@ -180,10 +318,11 @@ export const workspacesService = {
       slug: workspace.slug,
       logo: workspace.logo || '',
       ownerId: workspace.ownerId ? String(workspace.ownerId) : '',
-      plan: workspace.plan || 'starter',
+      plan: planLimitsService.normalizePlan(workspace.plan),
       timezone: workspace.timezone || workspace.settings?.timezone || 'UTC',
       role: membership.role,
       joinedAt: membership.joinedAt,
+      usage,
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     };
@@ -235,14 +374,16 @@ export const workspacesService = {
       meta: { at: new Date().toISOString() },
     });
 
+    const usage = await planLimitsService.getUsageSnapshot(resolvedId);
     return {
       id: String(workspace._id),
       name: workspace.name,
       slug: workspace.slug,
       logo: workspace.logo || '',
       ownerId: workspace.ownerId ? String(workspace.ownerId) : '',
-      plan: workspace.plan || 'starter',
+      plan: planLimitsService.normalizePlan(workspace.plan),
       timezone: workspace.timezone || workspace.settings?.timezone || 'UTC',
+      usage,
       createdAt: workspace.createdAt,
       updatedAt: workspace.updatedAt,
     };
@@ -371,6 +512,11 @@ export const workspacesService = {
     const resolvedId = await resolveWorkspaceId(workspaceId);
     if (!resolvedId) {
       throw new ApiError(404, 'Workspace not found', 'NOT_FOUND');
+    }
+
+    const capCheck = await planLimitsService.ensureMemberCapacity(resolvedId, 1);
+    if (!capCheck.allowed) {
+      throw new ApiError(429, capCheck.message, capCheck.code, capCheck.details);
     }
 
     const existingMember = await WorkspaceMember.findOne(

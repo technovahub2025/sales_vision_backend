@@ -31,6 +31,7 @@ import { attachmentsRoutes } from '../modules/attachments/attachments.routes.js'
 import { searchRoutes } from '../modules/search/search.routes.js';
 import { buildRateLimiter } from '../middlewares/rateLimiter.js';
 import { workspacesRoutes } from '../modules/workspaces/workspaces.routes.js';
+import { superAdminRoutes } from '../modules/superAdmin/superAdmin.routes.js';
 
 const v1 = Router();
 const publicApiLimiter = buildRateLimiter({
@@ -47,6 +48,7 @@ const importLimiter = buildRateLimiter({
 v1.get('/health', health);
 v1.get('/health/legacy-usage', legacyUsage);
 v1.use('/auth', authRoutes);
+v1.use('/super-admin', superAdminRoutes);
 v1.use(publicApiLimiter);
 
 const workspaceRouter = Router({ mergeParams: true });

@@ -296,6 +296,9 @@ export const projectsController = {
       return res.status(200).json(ok(result, { version: result.version }));
     } catch (error) {
       const message = String(error?.message || '');
+      if (error?.code === 'TASK_STATUS_LOCKED' || message.includes('Completed task cannot be moved back')) {
+        return res.status(409).json(fail('Completed task cannot be moved back', 'TASK_STATUS_LOCKED'));
+      }
       if (message.includes('Invalid target column')) {
         return res.status(400).json(fail('Invalid target column', 'VALIDATION_ERROR'));
       }

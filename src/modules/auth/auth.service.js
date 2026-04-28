@@ -19,7 +19,9 @@ import {
 import { randomId, randomToken, sha256 } from '../../utils/crypto.js';
 import { normalizeRole } from '../../utils/roles.js';
 import { classifyWorkspaceIntegrity } from '../../services/workspaceIntegrity.service.js';
+import { planLimitsService } from '../../services/planLimits.service.js';
 import { workflowService } from '../workflow/workflow.service.js';
+import { isSuperAdminEmail, superAdminService } from '../superAdmin/superAdmin.service.js';
 import { queueResetPasswordEmail, queueWelcomeEmail } from './auth.mailer.js';
 
 function slugify(input) {
@@ -55,16 +57,7 @@ function refreshCookieMaxAgeMs() {
   return days * 24 * 60 * 60 * 1000;
 }
 
-/**
- * Determines the default role for normal auth-based user creation.
- * First user of a workspace must remain owner; subsequent auth-created users default to viewer.
- * @param {{ workspaceOwnerId?: import('mongoose').Types.ObjectId|string|null, workspaceUserCount?: number }} params
- * @returns {'owner' | 'viewer'}
- */
-function resolveAuthDefaultRole({ workspaceOwnerId, workspaceUserCount = 0 }) {
-  if (workspaceOwnerId || Number(workspaceUserCount) > 0) return 'viewer';
-  return 'owner';
-}
+const NORMAL_REGISTER_ROLE = 'owner';
 
 /**
  * @param {{ userId: string, workspaceId: string, email: string, role: string, ipAddress?: string, userAgent?: string }} params
@@ -210,6 +203,7 @@ async function register({ body, req, res }) {
   const workspace = await Workspace.create({
     name: body.workspaceName,
     slug: await uniqueWorkspaceSlug(body.workspaceName),
+    plan: 'free',
   });
 
   const existing = await User.findOne({ workspaceId: workspace._id, email: body.email }, { _id: 1 }).lean();
@@ -220,29 +214,20 @@ async function register({ body, req, res }) {
     throw error;
   }
 
-  const defaultRole = resolveAuthDefaultRole({
-    workspaceOwnerId: workspace.ownerId,
-    workspaceUserCount: 0,
-  });
-
   const passwordHash = await bcrypt.hash(body.password, 12);
   const user = await User.create({
     workspaceId: workspace._id,
     displayName: body.displayName,
     email: body.email,
     passwordHash,
-    role: defaultRole,
+    role: NORMAL_REGISTER_ROLE,
   });
-
-  if (defaultRole === 'owner') {
-    await Workspace.updateOne({ _id: workspace._id }, { $set: { ownerId: user._id } });
-  }
 
   await WorkspaceMember.updateOne(
     { workspaceId: workspace._id, userId: user._id },
     {
       $set: {
-        role: defaultRole,
+        role: NORMAL_REGISTER_ROLE,
         status: 'active',
       },
       $setOnInsert: {
@@ -292,6 +277,23 @@ async function register({ body, req, res }) {
  * @param {{ body: {email: string, password: string}, req: import('express').Request, res: import('express').Response }} params
  */
 async function login({ body, req, res }) {
+  if (isSuperAdminEmail(body.email)) {
+    const { accessToken, admin } = await superAdminService.login({ body });
+    res.cookie(getAccessCookieName(), accessToken, cookieOptions(accessCookieMaxAgeMs()));
+
+    return {
+      accessToken,
+      user: {
+        id: admin.id,
+        displayName: admin.displayName,
+        email: admin.email,
+        role: 'super_admin',
+        isSuperAdmin: true,
+      },
+      memberships: [],
+    };
+  }
+
   const user = await User.findOne(
     { email: body.email, isActive: true },
     { workspaceId: 1, displayName: 1, email: 1, role: 1, passwordHash: 1 },
@@ -580,6 +582,22 @@ async function acceptInvite({ body, req, res }) {
     };
   }
 
+  const existingMembership = await WorkspaceMember.findOne(
+    { workspaceId: invite.workspaceId, userId: user._id },
+    { status: 1 },
+  ).lean();
+  const activatesMembership = !existingMembership || existingMembership.status !== 'active';
+  if (activatesMembership) {
+    const capCheck = await planLimitsService.ensureMemberCapacity(invite.workspaceId, 1);
+    if (!capCheck.allowed) {
+      const error = new Error(capCheck.message);
+      error.statusCode = 429;
+      error.code = capCheck.code;
+      error.details = capCheck.details;
+      throw error;
+    }
+  }
+
   await WorkspaceMember.updateOne(
     { workspaceId: invite.workspaceId, userId: user._id },
     {
@@ -636,8 +654,22 @@ async function acceptInvite({ body, req, res }) {
   };
 }
 
-/** @param {{ userId: string }} params */
-async function me({ userId }) {
+/** @param {{ userId: string, auth?: { isSuperAdmin?: boolean } }} params */
+async function me({ userId, auth }) {
+  if (auth?.isSuperAdmin) {
+    const { admin } = await superAdminService.me({ adminId: userId });
+    return {
+      user: {
+        id: admin.id,
+        displayName: admin.displayName,
+        email: admin.email,
+        role: 'super_admin',
+        isSuperAdmin: true,
+      },
+      memberships: [],
+    };
+  }
+
   const user = await User.findById(userId, { workspaceId: 1, displayName: 1, email: 1, role: 1, avatarUrl: 1 }).lean();
   if (!user) {
     const error = new Error('User not found');
@@ -656,10 +688,28 @@ async function me({ userId }) {
   const workspaceIds = memberships.map((item) => item.workspaceId);
   const workspaces = await Workspace.find(
     { _id: { $in: workspaceIds } },
-    { name: 1, slug: 1 },
+    { name: 1, slug: 1, plan: 1 },
   ).limit(100).lean();
 
-  const byId = new Map(workspaces.map((item) => [String(item._id), item]));
+  const usageSnapshots = await Promise.all(
+    workspaces.map(async (item) => {
+      const usage = await planLimitsService.getUsageSnapshot(item._id);
+      return [String(item._id), usage];
+    }),
+  );
+
+  const usageById = Object.fromEntries(usageSnapshots);
+
+  const byId = new Map(
+    workspaces.map((item) => [
+      String(item._id),
+      {
+        ...item,
+        plan: planLimitsService.normalizePlan(item.plan),
+        usage: usageById[String(item._id)] || null,
+      },
+    ]),
+  );
 
   return {
     user: {
