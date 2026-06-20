@@ -279,7 +279,7 @@ export const workspacesService = {
       data: workspace.toObject(),
     });
 
-    const usage = await planLimitsService.getUsageSnapshot(resolvedId);
+    const usage = await planLimitsService.getUsageSnapshot(String(workspace._id));
 
     return {
       id: String(workspace._id),
