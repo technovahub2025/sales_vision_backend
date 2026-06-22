@@ -67,11 +67,17 @@ function normalizeRole(role) {
  * @param {string} role
  */
 export function checkPermission(resource, action, role) {
-  const resourceRules = PERMISSION_MATRIX[resource] || {};
-  const allowedRoles = resourceRules[action];
+  const resourceKey = String(resource || '').trim();
+  const actionKey = String(action || '').trim();
+
+  const resourceRules = PERMISSION_MATRIX[resourceKey] || {};
+  const allowedRoles = resourceRules[actionKey];
+
+  // If resource/action is unknown, deny explicitly.
   if (!Array.isArray(allowedRoles) || !allowedRoles.length) {
     return false;
   }
+
   const normalizedRole = normalizeRole(role);
   return allowedRoles.some((allowed) => ROLE_RANK[normalizedRole] >= ROLE_RANK[normalizeRole(allowed)]);
 }
