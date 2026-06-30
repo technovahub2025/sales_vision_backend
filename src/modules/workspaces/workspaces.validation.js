@@ -81,6 +81,6 @@ export const listWorkspacesQuerySchema = z.object({
     limit: z.coerce.number().int().positive().max(100).optional(),
     search: z.string().trim().max(120).optional(),
     status: z.enum(['all', 'active', 'inactive']).optional(),
-    sort: z.enum(['recent', 'name_asc', 'name_desc']).optional(),
+    sort: z.enum(['newest', 'oldest', 'recent', 'name_asc', 'name_desc']).optional(),
   }),
 });

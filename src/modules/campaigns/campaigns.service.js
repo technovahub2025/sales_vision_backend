@@ -84,12 +84,13 @@ function parseListQuery(query = {}) {
   return { page, limit, skip };
 }
 
-function listSort(sort = 'recent') {
-  const key = String(sort || 'recent').toLowerCase();
+function listSort(sort = 'newest') {
+  const key = String(sort || 'newest').toLowerCase();
+  if (key === 'oldest') return { updatedAt: 1, createdAt: 1, _id: 1 };
   if (key === 'start_date') return { startDate: -1, updatedAt: -1 };
   if (key === 'spend') return { spend: -1, updatedAt: -1 };
   if (key === 'conversion') return { conversionRate: -1, updatedAt: -1 };
-  return { updatedAt: -1 };
+  return { updatedAt: -1, createdAt: -1, _id: -1 };
 }
 
 function resolveArchiveFilter(query = {}) {

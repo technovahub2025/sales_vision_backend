@@ -333,11 +333,12 @@ export const employeesService = {
     }
 
     const sort = (() => {
-      const sortBy = String(query.sort || 'recent').toLowerCase();
+      const sortBy = String(query.sort || 'newest').toLowerCase();
+      if (sortBy === 'oldest') return { updatedAt: 1, createdAt: 1, _id: 1 };
       if (sortBy === 'name') return { name: 1, updatedAt: -1 };
       if (sortBy === 'velocity') return { velocity: -1, updatedAt: -1 };
       if (sortBy === 'capacity') return { 'capacity.hoursPerWeek': -1, updatedAt: -1 };
-      return { updatedAt: -1 };
+      return { updatedAt: -1, createdAt: -1, _id: -1 };
     })();
 
     const [items, total] = await Promise.all([

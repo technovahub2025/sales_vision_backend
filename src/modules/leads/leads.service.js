@@ -42,10 +42,11 @@ function listQuery(query = {}) {
   return { page, limit, skip };
 }
 
-function listSort(sort = 'updatedAt') {
+function listSort(sort = 'newest') {
+  if (sort === 'oldest') return { updatedAt: 1, createdAt: 1, _id: 1 };
   if (sort === 'value') return { value: -1, updatedAt: -1 };
   if (sort === 'expectedCloseDate') return { expectedCloseDate: 1, updatedAt: -1 };
-  return { updatedAt: -1 };
+  return { updatedAt: -1, createdAt: -1, _id: -1 };
 }
 
 function resolveArchiveFilter(query = {}) {
@@ -161,6 +162,7 @@ export const leadsService = {
         tags: 1,
         customFields: 1,
         updatedAt: 1,
+        createdAt: 1,
       })
         .sort(listSort(query?.sort))
         .skip(skip)

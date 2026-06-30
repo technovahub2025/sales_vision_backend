@@ -28,6 +28,11 @@ function resolveArchiveFilter(query = {}) {
   return { isArchived: { $ne: true } };
 }
 
+function listSort(sort = 'newest') {
+  if (sort === 'oldest') return { updatedAt: 1, createdAt: 1, _id: 1 };
+  return { updatedAt: -1, createdAt: -1, _id: -1 };
+}
+
 async function emitClientMutation({ io, workspaceId, action, client }) {
   emitDomainEvent(io, { workspaceId, moduleName: 'clients', entity: 'client', action, data: client });
   emitDomainEvent(io, {
@@ -85,8 +90,9 @@ export const clientsService = {
         tags: 1,
         status: 1,
         updatedAt: 1,
+        createdAt: 1,
       })
-        .sort({ updatedAt: -1 })
+        .sort(listSort(query.sort))
         .skip(skip)
         .limit(limit)
         .lean(),

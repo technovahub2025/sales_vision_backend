@@ -125,7 +125,7 @@ export const workspacesService = {
   async list({ userId, query = {} }) {
     const { page, limit, skip } = parsePage(query);
     const status = String(query.status || 'all').toLowerCase();
-    const sort = String(query.sort || 'recent').toLowerCase();
+    const sort = String(query.sort || 'newest').toLowerCase();
     const searchTerm = String(query.search || '').trim();
     const searchRegex = searchTerm
       ? new RegExp(searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
@@ -141,6 +141,7 @@ export const workspacesService = {
     }
 
     const sortStage = (() => {
+      if (sort === 'oldest') return { 'workspace.updatedAt': 1, joinedAt: 1 };
       if (sort === 'name_asc') return { 'workspace.name': 1 };
       if (sort === 'name_desc') return { 'workspace.name': -1 };
       return { 'workspace.updatedAt': -1, joinedAt: -1 };
