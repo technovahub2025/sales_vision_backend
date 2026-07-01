@@ -89,7 +89,13 @@ taskSchema.index({ workspaceId: 1, projectId: 1, status: 1, position: 1 });
 taskSchema.index({ workspaceId: 1, updatedAt: -1 });
 taskSchema.index({ workspaceId: 1, projectId: 1, updatedAt: -1 });
 taskSchema.index({ workspaceId: 1, priority: 1, updatedAt: -1 });
-taskSchema.index({ workspaceId: 1, clientRequestId: 1 }, { unique: true, sparse: true });
+taskSchema.index(
+  { workspaceId: 1, clientRequestId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { clientRequestId: { $exists: true, $type: 'string' } },
+  },
+);
 taskSchema.index({ workspaceId: 1, status: 1, priority: 1, dueDate: 1, updatedAt: -1 });
 taskSchema.index({ workspaceId: 1, parentTaskId: 1, updatedAt: -1 });
 taskSchema.index({ workspaceId: 1, issueType: 1, updatedAt: -1 });
@@ -97,3 +103,21 @@ taskSchema.index({ workspaceId: 1, sprintId: 1, backlogOrder: 1, priority: 1 });
 taskSchema.index({ workspaceId: 1, 'approval.status': 1, updatedAt: -1 });
 
 export const Task = mongoose.model('Task', taskSchema, 'sv_tasks');
+
+export async function ensureTaskIndexes() {
+  const targetKey = { workspaceId: 1, clientRequestId: 1 };
+  const targetPartialFilterExpression = { clientRequestId: { $exists: true, $type: 'string' } };
+  const indexes = await Task.collection.indexes();
+  const legacyIndex = indexes.find((index) => {
+    const key = JSON.stringify(index.key || {});
+    const partial = JSON.stringify(index.partialFilterExpression || null);
+    const targetPartial = JSON.stringify(targetPartialFilterExpression);
+    return key === JSON.stringify(targetKey) && index.unique && partial !== targetPartial;
+  });
+
+  if (legacyIndex?.name) {
+    await Task.collection.dropIndex(legacyIndex.name);
+  }
+
+  await Task.createIndexes();
+}
