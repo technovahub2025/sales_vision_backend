@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { tasksController } from './tasks.controller.js';
 import { validateRequest } from '../../middlewares/validation.js';
-import { uploadFiles } from '../../middlewares/uploadMiddleware.js';
+import { uploadTaskImages } from '../../middlewares/uploadMiddleware.js';
 import { requirePermission } from '../../middlewares/rbac.js';
 import {
   taskActivityQuerySchema,
@@ -37,7 +37,7 @@ tasksRoutes.post(
   '/:taskId/attachments',
   requirePermission('task', 'update'),
   validateRequest({ params: taskIdParamsSchema }),
-  uploadFiles,
+  uploadTaskImages,
   tasksController.createAttachment,
 );
 tasksRoutes.post('/:taskId/timer/start', requirePermission('task', 'update'), validateRequest({ params: taskIdParamsSchema }), tasksController.startTimer);

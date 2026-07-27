@@ -74,6 +74,11 @@ CLIENT_ORIGIN=https://technovahub.in,https://www.technovahub.in,http://localhost
 - `POST /api/workspaces/:workspaceId/tasks/:taskId/comments`
 - `POST /api/workspaces/:workspaceId/seed` (disabled in production)
 
+## Task Attachments
+
+- Task image uploads are limited to 3 files per task.
+- `POST /api/v1/workspaces/:workspaceId/tasks/:taskId/attachments` accepts images only.
+
 ## Realtime Events
 
 Client emits:

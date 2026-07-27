@@ -1,6 +1,7 @@
 import multer from 'multer';
 
 const MAX_FILES = 5;
+const MAX_TASK_IMAGE_FILES = 3;
 const rawMaxUploadSizeMb = Number(process.env.MAX_UPLOAD_SIZE_MB || 10);
 const MAX_SIZE_MB = Number.isNaN(rawMaxUploadSizeMb) || rawMaxUploadSizeMb <= 0
   ? 10
@@ -23,22 +24,25 @@ const allowedTypes = new Set([
   'audio/mpeg',
   'audio/wav',
 ]);
+const imageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 const storage = multer.memoryStorage();
 
-function createUploader(fieldName) {
+function createUploader(fieldName, options = {}) {
+  const maxFiles = Number(options.maxFiles || MAX_FILES);
+  const allowedMimes = options.imageOnly ? imageTypes : allowedTypes;
   const upload = multer({
     storage,
-    limits: { fileSize: MAX_BYTES, files: MAX_FILES },
+    limits: { fileSize: MAX_BYTES, files: maxFiles },
     fileFilter: (req, file, cb) => {
-      if (!allowedTypes.has(file.mimetype)) {
+      if (!allowedMimes.has(file.mimetype)) {
         const error = new Error('Unsupported file type');
         error.code = 'INVALID_FILE_TYPE';
         return cb(error);
       }
       return cb(null, true);
     },
-  }).array(fieldName, MAX_FILES);
+  }).array(fieldName, maxFiles);
 
   return (req, res, next) => {
     upload(req, res, (err) => {
@@ -49,13 +53,13 @@ function createUploader(fieldName) {
         message = `File too large. Max ${MAX_SIZE_MB}MB.`;
       }
       if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-        message = `Too many files. Max ${MAX_FILES}.`;
+        message = `Too many files. Max ${maxFiles}.`;
       }
       return res.status(400).json({
         success: false,
         code: 'INVALID_FILE',
         message,
-        allowedTypes: Array.from(allowedTypes),
+        allowedTypes: Array.from(allowedMimes),
         maxSizeMb: MAX_SIZE_MB,
       });
     });
@@ -64,3 +68,7 @@ function createUploader(fieldName) {
 
 export const uploadFiles = createUploader('files');
 export const uploadSingle = createUploader('file');
+export const uploadTaskImages = createUploader('files', {
+  maxFiles: MAX_TASK_IMAGE_FILES,
+  imageOnly: true,
+});

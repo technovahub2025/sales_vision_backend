@@ -26,6 +26,7 @@ const FINAL_STATUSES = new Set(['completed', 'done', 'closed']);
 const SORT_FIELDS = new Set(['dueDate', 'priority', 'createdAt', 'updatedAt']);
 const ISSUE_TYPES = new Set(['epic', 'task', 'subtask']);
 const COMPLETED_STATUS_KEY = 'completed';
+const TASK_ATTACHMENT_MAX = 3;
 
 function createTaskStatusLockedError() {
   const error = new Error('Completed task cannot be moved back');
@@ -1440,6 +1441,18 @@ export const tasksService = {
     };
     if (!attachment.url || !attachment.filename) {
       throw new Error('url and filename are required');
+    }
+    const existingTask = await Task.findOne(
+      { workspaceId, _id: taskId },
+      { attachments: 1, title: 1, projectId: 1, updatedAt: 1 },
+    ).lean();
+    if (!existingTask) return null;
+    if ((existingTask.attachments || []).length >= TASK_ATTACHMENT_MAX) {
+      const error = new Error(`Task images are limited to ${TASK_ATTACHMENT_MAX}`);
+      error.statusCode = 400;
+      error.code = 'VALIDATION_ERROR';
+      error.details = { maxFiles: TASK_ATTACHMENT_MAX };
+      throw error;
     }
     const storageCheck = await planLimitsService.ensureStorageCapacity(workspaceId, attachment.size);
     if (!storageCheck.allowed) {

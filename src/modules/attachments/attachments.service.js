@@ -19,6 +19,7 @@ const ENTITY_MODELS = {
   employee: Employee,
   user: User,
 };
+const TASK_ATTACHMENT_MAX = 3;
 
 async function ensureEntityExists({ workspaceId, entityType, entityId }) {
   const Model = ENTITY_MODELS[entityType];
@@ -85,6 +86,17 @@ export const attachmentsService = {
     }
     const entity = await ensureEntityExists({ workspaceId, entityType, entityId });
     if (!entity) return null;
+
+    if (entityType === 'task') {
+      const existingCount = await Attachment.countDocuments({ workspaceId, entityType, entityId });
+      if (existingCount + files.length > TASK_ATTACHMENT_MAX) {
+        const error = new Error(`Task images are limited to ${TASK_ATTACHMENT_MAX}`);
+        error.statusCode = 400;
+        error.code = 'VALIDATION_ERROR';
+        error.details = { maxFiles: TASK_ATTACHMENT_MAX, existingCount, requestedCount: files.length };
+        throw error;
+      }
+    }
 
     const incomingBytes = (files || []).reduce((total, item) => total + Number(item?.size || 0), 0);
     const storageCheck = await planLimitsService.ensureStorageCapacity(workspaceId, incomingBytes);
