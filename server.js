@@ -8,16 +8,15 @@ import { createRedisDuplicate, getRedisClient, isUsingMockRedis } from './src/co
 import { registerSocketHandlers } from './src/sockets/index.js';
 import { startNotificationScheduler, stopNotificationScheduler } from './src/modules/notifications/notifications.scheduler.js';
 import { repairWorkspaceIntegrity } from './src/services/workspaceIntegrity.service.js';
+import { corsOriginDelegate } from './src/config/cors.js';
 
 const port = Number(process.env.PORT || 3001);
-const clientOrigin = process.env.CLIENT_ORIGIN || '*';
-
 const app = createApp();
 const httpServer = http.createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: clientOrigin === '*' ? true : clientOrigin,
+    origin: corsOriginDelegate(),
     credentials: true,
   },
 });

@@ -33,11 +33,20 @@ MAIL_FROM_EMAIL=nexisonservices@gmail.com
 MAIL_FROM_NAME="Nexison Services"
 MAIL_GMAIL_APP_PASSWORD=your_16_char_gmail_app_password
 APP_URL=http://localhost:5173
+CLIENT_ORIGIN=http://localhost:5173
 ```
 
 Notes:
 - `MAIL_GMAIL_APP_PASSWORD` must be a Google App Password from the same Gmail account.
 - `APP_URL` is used for invite and reset-password links (`/invite/:token`, `/reset-password/:token`).
+- `CLIENT_ORIGIN` controls which browser origins are allowed to call the API.
+- You can provide multiple allowed origins with commas, for example:
+
+```bash
+CLIENT_ORIGIN=https://technovahub.in,https://www.technovahub.in,http://localhost:5173
+```
+
+- Wildcards are supported for subdomains, for example `https://*.technovahub.in`.
 
 ## API Endpoints
 

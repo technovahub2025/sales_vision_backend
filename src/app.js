@@ -8,14 +8,14 @@ import { notFound } from './controllers/system.controller.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { sanitize, payloadLimit } from './middlewares/sanitize.js';
 import { requestId } from './middlewares/requestId.js';
+import { corsOriginDelegate } from './config/cors.js';
 
 export function createApp() {
   const app = express();
-  const clientOrigin = process.env.CLIENT_ORIGIN || '*';
 
   app.use(
     cors({
-      origin: clientOrigin === '*' ? true : clientOrigin,
+      origin: corsOriginDelegate(),
       credentials: true,
     }),
   );
