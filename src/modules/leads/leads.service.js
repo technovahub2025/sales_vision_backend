@@ -5,6 +5,7 @@ import { appendActivity } from '../activity/activity.service.js';
 import { emitCoalesced, emitDomainEvent } from '../../sockets/emitters.js';
 import { invalidateDashboardCache } from '../dashboard/dashboard.service.js';
 import { validateCustomFields } from '../customFields/customFields.service.js';
+import { isReminderPriority, normalizeLeadPriority } from './leads.reminders.js';
 
 const DEFAULT_STAGES = [
   { id: 'new', title: 'New' },
@@ -99,6 +100,21 @@ async function emitLeadMutation({ io, workspaceId, action, lead }) {
   await invalidateDashboardCache({ workspaceId, io, trigger: 'lead:updated' });
 }
 
+function getReminderState({ assigneeId, priority, leadAssignedAt, leadReminderLastSentAt, createdAt }) {
+  const tracked = Boolean(assigneeId) && isReminderPriority(priority);
+  if (!tracked) {
+    return {
+      leadAssignedAt: null,
+      leadReminderLastSentAt: null,
+    };
+  }
+
+  return {
+    leadAssignedAt: leadAssignedAt || createdAt || new Date(),
+    leadReminderLastSentAt: leadReminderLastSentAt || null,
+  };
+}
+
 export const leadsService = {
   async pipeline({ workspaceId, query = {} }) {
     const workspaceObjectId = requireWorkspaceObjectId(workspaceId);
@@ -156,6 +172,8 @@ export const leadsService = {
         value: 1,
         currency: 1,
         assigneeId: 1,
+        leadAssignedAt: 1,
+        leadReminderLastSentAt: 1,
         clientId: 1,
         expectedCloseDate: 1,
         nextFollowUp: 1,
@@ -181,6 +199,8 @@ export const leadsService = {
       workflowId: 1,
       statusId: 1,
       assigneeId: 1,
+      leadAssignedAt: 1,
+      leadReminderLastSentAt: 1,
       clientId: 1,
       value: 1,
       currency: 1,
@@ -201,18 +221,27 @@ export const leadsService = {
       const validation = await validateCustomFields('lead', data.customFields, workspaceId);
       if (!validation.valid) throw new Error(validation.message);
     }
+    const priority = normalizeLeadPriority(data?.priority || 'warm');
+    const assigneeId = data?.assigneeId || undefined;
+    const reminderState = getReminderState({
+      assigneeId,
+      priority,
+      leadAssignedAt: assigneeId ? new Date() : null,
+      leadReminderLastSentAt: null,
+      createdAt: new Date(),
+    });
     const payload = {
       workspaceId,
       title: String(data?.title || '').trim(),
       stage: data?.statusId || data?.stage || 'new',
       workflowId: data?.workflowId || 'default-lead-pipeline',
       statusId: data?.statusId || data?.stage || 'new',
-      assigneeId: data?.assigneeId || undefined,
+      assigneeId,
       clientId: data?.clientId || undefined,
       value: Number(data?.value || 0),
       currency: data?.currency || 'USD',
       source: data?.source || 'organic',
-      priority: data?.priority || 'warm',
+      priority,
       expectedCloseDate: data?.expectedCloseDate || undefined,
       tags: Array.isArray(data?.tags) ? data.tags : [],
       customFields: data?.customFields && typeof data.customFields === 'object' ? data.customFields : {},
@@ -222,6 +251,8 @@ export const leadsService = {
       owner: data?.owner || '',
       health: data?.health || 'healthy',
       dueDate: data?.dueDate || undefined,
+      leadAssignedAt: reminderState.leadAssignedAt,
+      leadReminderLastSentAt: reminderState.leadReminderLastSentAt,
     };
     if (!payload.title) {
       throw new Error('title is required');
@@ -248,6 +279,31 @@ export const leadsService = {
       const validation = await validateCustomFields('lead', data.customFields, workspaceId);
       if (!validation.valid) throw new Error(validation.message);
     }
+    const current = await Lead.findOne(
+      { _id: id, workspaceId, isArchived: { $ne: true } },
+      { assigneeId: 1, priority: 1, leadAssignedAt: 1, leadReminderLastSentAt: 1, createdAt: 1 },
+    ).lean();
+    if (!current) return null;
+
+    const nextPriority = data.priority !== undefined ? normalizeLeadPriority(data.priority) : normalizeLeadPriority(current.priority);
+    const nextAssigneeId = data.assigneeId !== undefined ? data.assigneeId || null : current.assigneeId;
+    const assigneeChanged =
+      data.assigneeId !== undefined && String(nextAssigneeId || '') !== String(current.assigneeId || '');
+    const priorityChanged =
+      data.priority !== undefined && nextPriority !== String(current.priority || '').toLowerCase();
+    const reminderState = (assigneeChanged || priorityChanged)
+      ? getReminderState({
+          assigneeId: nextAssigneeId,
+          priority: nextPriority,
+          leadAssignedAt: nextAssigneeId ? new Date() : null,
+          leadReminderLastSentAt: null,
+          createdAt: current.createdAt,
+        })
+      : {
+          leadAssignedAt: current.leadAssignedAt,
+          leadReminderLastSentAt: current.leadReminderLastSentAt,
+        };
+
     const payload = {
       ...(data.title !== undefined ? { title: String(data.title || '').trim() } : {}),
       ...(data.assigneeId !== undefined ? { assigneeId: data.assigneeId || null } : {}),
@@ -255,7 +311,7 @@ export const leadsService = {
       ...(data.value !== undefined ? { value: Number(data.value || 0) } : {}),
       ...(data.currency !== undefined ? { currency: data.currency || 'USD' } : {}),
       ...(data.source !== undefined ? { source: data.source } : {}),
-      ...(data.priority !== undefined ? { priority: data.priority } : {}),
+      ...(data.priority !== undefined ? { priority: nextPriority } : {}),
       ...(data.expectedCloseDate !== undefined ? { expectedCloseDate: data.expectedCloseDate || null } : {}),
       ...(data.tags !== undefined ? { tags: Array.isArray(data.tags) ? data.tags : [] } : {}),
       ...(data.customFields !== undefined ? { customFields: data.customFields && typeof data.customFields === 'object' ? data.customFields : {} } : {}),
@@ -263,6 +319,12 @@ export const leadsService = {
       ...(data.nextFollowUp !== undefined ? { nextFollowUp: data.nextFollowUp || null } : {}),
       ...(data.owner !== undefined ? { owner: data.owner || '' } : {}),
       ...(data.health !== undefined ? { health: data.health || 'healthy' } : {}),
+      ...(data.assigneeId !== undefined || data.priority !== undefined
+        ? {
+            leadAssignedAt: reminderState.leadAssignedAt,
+            leadReminderLastSentAt: reminderState.leadReminderLastSentAt,
+          }
+        : {}),
     };
 
     const lead = await Lead.findOneAndUpdate(
@@ -279,6 +341,8 @@ export const leadsService = {
           value: 1,
           currency: 1,
           assigneeId: 1,
+          leadAssignedAt: 1,
+          leadReminderLastSentAt: 1,
           clientId: 1,
           expectedCloseDate: 1,
           nextFollowUp: 1,

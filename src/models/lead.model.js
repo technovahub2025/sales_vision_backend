@@ -9,6 +9,8 @@ const leadSchema = new mongoose.Schema(
     statusId: { type: String, default: 'new', index: true },
     assigneeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', index: true },
     clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', index: true },
+    leadAssignedAt: { type: Date, default: null, index: true },
+    leadReminderLastSentAt: { type: Date, default: null, index: true },
     value: { type: Number, default: 0 },
     currency: { type: String, default: 'USD' },
     source: {

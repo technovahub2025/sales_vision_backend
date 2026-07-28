@@ -37,7 +37,7 @@ export const leadsController = {
       return res.status(201).json(ok(item));
     } catch (error) {
       const message = String(error?.message || '');
-      if (message.includes('title is required') || message.includes('Custom field')) {
+      if (message.includes('title is required') || message.includes('Custom field') || message.includes('invalid priority')) {
         return res.status(400).json(fail(message, 'VALIDATION_ERROR'));
       }
       return next(error);
@@ -51,7 +51,7 @@ export const leadsController = {
       return res.status(200).json(ok(item));
     } catch (error) {
       const message = String(error?.message || '');
-      if (message.includes('Custom field')) {
+      if (message.includes('Custom field') || message.includes('invalid priority')) {
         return res.status(400).json(fail(message, 'VALIDATION_ERROR'));
       }
       return next(error);

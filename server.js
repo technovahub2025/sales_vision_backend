@@ -7,6 +7,7 @@ import { connectToDatabase, disconnectDatabase } from './src/config/db.js';
 import { createRedisDuplicate, getRedisClient, isUsingMockRedis } from './src/config/redis.js';
 import { registerSocketHandlers } from './src/sockets/index.js';
 import { startNotificationScheduler, stopNotificationScheduler } from './src/modules/notifications/notifications.scheduler.js';
+import { startLeadReminderScheduler, stopLeadReminderScheduler } from './src/modules/leads/leads.scheduler.js';
 import { repairWorkspaceIntegrity } from './src/services/workspaceIntegrity.service.js';
 import { corsOriginDelegate } from './src/config/cors.js';
 
@@ -67,6 +68,7 @@ enableRedisAdapter().catch(() => {
 registerSocketHandlers(io);
 app.locals.io = io;
 startNotificationScheduler(io);
+startLeadReminderScheduler(io);
 
 async function start() {
   await connectToDatabase();
@@ -102,6 +104,7 @@ async function shutdown(signal) {
 
   io.close();
   stopNotificationScheduler();
+  stopLeadReminderScheduler();
   httpServer.close(async () => {
     await disconnectDatabase();
     process.exit(0);
