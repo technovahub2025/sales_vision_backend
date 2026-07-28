@@ -6,21 +6,61 @@ function provider() {
   return String(process.env.MAIL_PROVIDER || '').trim().toLowerCase();
 }
 
-function createTransport() {
-  const selected = provider();
-  if (selected !== 'gmail') {
-    throw new Error(`Unsupported MAIL_PROVIDER: ${selected || '(empty)'}`);
+function smtpPassword(selectedProvider) {
+  if (selectedProvider === 'gmail') {
+    return (
+      String(process.env.MAIL_GMAIL_APP_PASSWORD || '').trim() ||
+      String(process.env.MAIL_SMTP_PASSWORD || '').trim()
+    );
   }
 
-  return nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-      user: process.env.MAIL_FROM_EMAIL,
-      pass: process.env.MAIL_GMAIL_APP_PASSWORD,
-    },
-  });
+  if (selectedProvider === 'hotmail') {
+    return (
+      String(process.env.MAIL_HOTMAIL_APP_PASSWORD || '').trim() ||
+      String(process.env.MAIL_OUTLOOK_APP_PASSWORD || '').trim() ||
+      String(process.env.MAIL_SMTP_PASSWORD || '').trim()
+    );
+  }
+
+  if (selectedProvider === 'outlook') {
+    return (
+      String(process.env.MAIL_OUTLOOK_APP_PASSWORD || '').trim() ||
+      String(process.env.MAIL_HOTMAIL_APP_PASSWORD || '').trim() ||
+      String(process.env.MAIL_SMTP_PASSWORD || '').trim()
+    );
+  }
+
+  return String(process.env.MAIL_SMTP_PASSWORD || '').trim();
+}
+
+function createTransport() {
+  const selected = provider();
+  if (selected === 'gmail') {
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.MAIL_FROM_EMAIL,
+        pass: smtpPassword(selected),
+      },
+    });
+  }
+
+  if (selected === 'hotmail' || selected === 'outlook') {
+    return nodemailer.createTransport({
+      host: 'smtp.office365.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      auth: {
+        user: process.env.MAIL_FROM_EMAIL,
+        pass: smtpPassword(selected),
+      },
+    });
+  }
+
+  throw new Error(`Unsupported MAIL_PROVIDER: ${selected || '(empty)'}`);
 }
 
 function getTransport() {

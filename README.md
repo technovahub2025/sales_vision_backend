@@ -22,9 +22,9 @@ cp .env.example .env
 npm run dev
 ```
 
-## Email Configuration (Gmail)
+## Email Configuration
 
-The backend sends invitation, welcome, and password-reset emails through Gmail SMTP.
+The backend sends invitation, welcome, and password-reset emails through SMTP.
 Set these environment variables:
 
 ```bash
@@ -38,6 +38,14 @@ CLIENT_ORIGIN=http://localhost:5173
 
 Notes:
 - `MAIL_GMAIL_APP_PASSWORD` must be a Google App Password from the same Gmail account.
+- For Hotmail or Outlook, set `MAIL_PROVIDER=hotmail` or `MAIL_PROVIDER=outlook` and provide one of these passwords instead:
+
+```bash
+MAIL_HOTMAIL_APP_PASSWORD=your_hotmail_app_password
+MAIL_OUTLOOK_APP_PASSWORD=your_outlook_app_password
+```
+
+- Hotmail/Outlook mail is sent immediately instead of being delayed by the auth mail queue.
 - `APP_URL` is used for invite and reset-password links (`/invite/:token`, `/reset-password/:token`).
 - `CLIENT_ORIGIN` controls which browser origins are allowed to call the API.
 - You can provide multiple allowed origins with commas, for example:

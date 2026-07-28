@@ -7,6 +7,15 @@ const inviteQueue = [];
 let scheduled = false;
 let flushing = false;
 
+function provider() {
+  return String(process.env.MAIL_PROVIDER || '').trim().toLowerCase();
+}
+
+function shouldSendImmediately() {
+  const selected = provider();
+  return selected === 'hotmail' || selected === 'outlook';
+}
+
 async function deliver(label, payload, builder) {
   const startedAt = Date.now();
   const to = String(payload?.to || '').trim();
@@ -40,6 +49,16 @@ async function deliver(label, payload, builder) {
   }
 }
 
+function sendOrQueue(queue, label, builder, payload) {
+  if (shouldSendImmediately()) {
+    return deliver(label, payload, builder);
+  }
+
+  queue.push({ ...payload, queuedAt: new Date().toISOString() });
+  scheduleFlush();
+  return null;
+}
+
 async function flushQueue(queue, label, builder) {
   while (queue.length) {
     const item = queue.shift();
@@ -69,18 +88,15 @@ function scheduleFlush() {
 }
 
 export function queueWelcomeEmail(payload) {
-  welcomeQueue.push({ ...payload, queuedAt: new Date().toISOString() });
-  scheduleFlush();
+  return sendOrQueue(welcomeQueue, 'welcome', buildWelcomeEmail, payload);
 }
 
 export function queueResetPasswordEmail(payload) {
-  resetQueue.push({ ...payload, queuedAt: new Date().toISOString() });
-  scheduleFlush();
+  return sendOrQueue(resetQueue, 'reset-password', buildResetPasswordEmail, payload);
 }
 
 export function queueInviteEmail(payload) {
-  inviteQueue.push({ ...payload, queuedAt: new Date().toISOString() });
-  scheduleFlush();
+  return sendOrQueue(inviteQueue, 'invite', buildInviteEmail, payload);
 }
 
 export const __mailTestUtils = {
